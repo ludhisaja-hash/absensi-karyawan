@@ -449,6 +449,7 @@
       officeRadius: 50 // meter
     };
 
+    // Default Fallback Accounts
     let employeesData = [
       { nik: "admin", name: "Administrator Utama", dept: "IT & HR", shiftId: "S1", password: "admin123", role: "Admin", faceVector: [] },
       { nik: "1001", name: "Budi Santoso", dept: "Teknikal", shiftId: "S1", password: "123456", role: "Karyawan", faceVector: [] },
@@ -522,10 +523,32 @@
 
         if (json.status === 'success') {
           if (json.employees && json.employees.length > 0) {
-            employeesData = json.employees.map(e => ({
-              ...e,
-              faceVector: typeof e.FaceDescriptor === 'string' && e.FaceDescriptor ? JSON.parse(e.FaceDescriptor) : (e.faceVector || [])
-            }));
+            // Normalisasi data dari Google Sheets (menangani huruf kapital & konversi string)
+            employeesData = json.employees.map(e => {
+              const nikVal = String(e.NIK || e.nik || "").trim();
+              const passVal = String(e.Password || e.password || "").trim();
+              const nameVal = e.Nama || e.nama || e.Name || e.name || "";
+              const deptVal = e.Departemen || e.dept || e.Department || "";
+              const roleVal = e.Role || e.role || "Karyawan";
+              
+              let vector = [];
+              const rawDesc = e.FaceDescriptor || e.faceDescriptor || e.faceVector;
+              if (typeof rawDesc === 'string' && rawDesc) {
+                try { vector = JSON.parse(rawDesc); } catch(err) { vector = []; }
+              } else if (Array.isArray(rawDesc)) {
+                vector = rawDesc;
+              }
+
+              return {
+                nik: nikVal,
+                name: nameVal,
+                dept: deptVal,
+                shiftId: e.ShiftID || e.shiftId || "S1",
+                password: passVal,
+                role: roleVal,
+                faceVector: vector
+              };
+            });
           }
 
           if (json.logs) {
@@ -546,7 +569,7 @@
           showToast("Data tersinkronkan dengan Google Sheets!", "success");
 
           if (currentUser) {
-            const freshUser = employeesData.find(e => e.nik == currentUser.nik);
+            const freshUser = employeesData.find(e => String(e.nik).toLowerCase() === String(currentUser.nik).toLowerCase());
             if (freshUser) currentUser = freshUser;
             updateEmployeeProfileView();
           }
@@ -560,10 +583,15 @@
 
     function handleLogin(e) {
       e.preventDefault();
-      const nik = document.getElementById('loginNik').value.trim();
-      const pass = document.getElementById('loginPass').value.trim();
+      const inputNik = String(document.getElementById('loginNik').value).trim();
+      const inputPass = String(document.getElementById('loginPass').value).trim();
 
-      const user = employeesData.find(emp => emp.nik.toLowerCase() === nik.toLowerCase() && emp.password === pass);
+      // Pencocokan fleksibel dengan perbandingan string murni
+      const user = employeesData.find(emp => {
+        const empNik = String(emp.nik).trim();
+        const empPass = String(emp.password).trim();
+        return empNik.toLowerCase() === inputNik.toLowerCase() && empPass === inputPass;
+      });
 
       if (!user) {
         showToast("NIK atau Password salah!", "error");
@@ -911,7 +939,7 @@
 
     function renderEmployeeLogs() {
       const container = document.getElementById('employeeLogsList');
-      const myLogs = attendanceLogs.filter(l => l.NIK == currentUser.nik);
+      const myLogs = attendanceLogs.filter(l => String(l.NIK || l.nik) == String(currentUser.nik));
 
       document.getElementById('logCount').innerText = `${myLogs.length} Catatan`;
 
@@ -992,7 +1020,7 @@
     function filterAdminLogs() {
       const query = document.getElementById('logSearch').value.toLowerCase();
       const container = document.getElementById('adminLogsContainer');
-      const filtered = attendanceLogs.filter(l => l.Nama.toLowerCase().includes(query) || l.NIK.toLowerCase().includes(query));
+      const filtered = attendanceLogs.filter(l => String(l.Nama).toLowerCase().includes(query) || String(l.NIK).toLowerCase().includes(query));
 
       if (filtered.length === 0) {
         container.innerHTML = `<p class="text-xs text-slate-500 text-center py-4">Pencarian tidak ditemukan.</p>`;
@@ -1089,10 +1117,10 @@
     async function handleAddEmployeeSubmit(e) {
       e.preventDefault();
       const newEmp = {
-        nik: document.getElementById('newEmpNik').value.trim(),
+        nik: String(document.getElementById('newEmpNik').value).trim(),
         name: document.getElementById('newEmpName').value.trim(),
         dept: document.getElementById('newEmpDept').value.trim(),
-        password: document.getElementById('newEmpPass').value.trim(),
+        password: String(document.getElementById('newEmpPass').value).trim(),
         shiftId: "S1",
         role: "Karyawan",
         faceVector: []
