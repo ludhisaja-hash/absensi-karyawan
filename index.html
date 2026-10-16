@@ -457,7 +457,14 @@
     ];
 
     let attendanceLogs = [];
-    let apiUrl = localStorage.getItem('absensi_api_url') || '';
+    
+    // =========================================================================
+    // TEMPELKAN URL WEB APP GOOGLE APPS SCRIPT ANDA DI BAWAH INI (PERMANEN)
+    // Contoh: "https://script.google.com/macros/s/AKfycbx.../exec"
+    // =========================================================================
+    const PERMANENT_API_URL = "https://script.google.com/macros/s/AKfycbxn3fKIeSim0810ixYjVUP2-04fjkHKnTwJ_ElhpvQOZDejSzO29NiV4GPd5uZWx9XG/exec";
+
+    let apiUrl = localStorage.getItem('absensi_api_url') || PERMANENT_API_URL;
 
     window.onload = function() {
       if (apiUrl) {
@@ -1068,8 +1075,8 @@
 
     function saveApiUrlFromAdmin() {
       const url = document.getElementById('inputApiUrlAdmin').value.trim();
-      apiUrl = url;
-      localStorage.setItem('absensi_api_url', url);
+      apiUrl = url || PERMANENT_API_URL;
+      localStorage.setItem('absensi_api_url', apiUrl);
       showToast("URL API Google Sheets berhasil disimpan!", "success");
       syncDataFromBackend();
     }
