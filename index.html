@@ -9,6 +9,9 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   
+  <!-- Pustaka AI Client-Side Face Recognition (@vladmandic/face-api berbasis TensorFlow.js) -->
+  <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+
   <script>
     tailwind.config = {
       darkMode: 'class',
@@ -441,6 +444,11 @@
     let currentScanType = 'MASUK';
     let userLocation = { lat: 0, lng: 0, distance: 999999, inRadius: false };
     
+    // AI Face Recognition Engine State
+    let isAiModelLoaded = false;
+    let isAiModelLoading = false;
+    const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+
     // Default Settings Standard
     let appSettings = {
       officeName: "Kantor Pusat Jakarta",
@@ -462,11 +470,14 @@
     // TEMPELKAN URL WEB APP GOOGLE APPS SCRIPT ANDA DI BAWAH INI (PERMANEN)
     // Contoh: "https://script.google.com/macros/s/AKfycbx.../exec"
     // =========================================================================
-    const PERMANENT_API_URL = "https://script.google.com/macros/s/AKfycbxn3fKIeSim0810ixYjVUP2-04fjkHKnTwJ_ElhpvQOZDejSzO29NiV4GPd5uZWx9XG/exec";
+    const PERMANENT_API_URL = "https://script.google.com/macros/s/GANTI_DENGAN_URL_WEB_APP_ANDA/exec";
 
     let apiUrl = localStorage.getItem('absensi_api_url') || PERMANENT_API_URL;
 
     window.onload = function() {
+      // Inisialisasi Model AI Face Recognition di Background
+      initAiFaceModels();
+
       if (apiUrl) {
         syncDataFromBackend();
       } else {
@@ -475,6 +486,29 @@
       }
       checkGpsLocation();
     };
+
+    // Fungsi Inisialisasi & Load Model AI Face Recognition
+    async function initAiFaceModels() {
+      if (isAiModelLoaded || isAiModelLoading) return;
+      isAiModelLoading = true;
+      document.getElementById('systemStatusText').innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span> Memuat Model AI Wajah...`;
+      
+      try {
+        if (typeof faceapi !== 'undefined') {
+          await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+          await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+          await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+          isAiModelLoaded = true;
+          isAiModelLoading = false;
+          document.getElementById('systemStatusText').innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> AI Wajah Siap (128-D)`;
+          showToast("Model AI Face Recognition siap digunakan!", "success");
+        }
+      } catch (err) {
+        console.warn("Gagal memuat Model AI dari CDN, menggunakan mode fallback:", err);
+        isAiModelLoading = false;
+        document.getElementById('systemStatusText').innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span> Mode Standalone / Fallback`;
+      }
+    }
 
     function updateConnBadge(isConnected) {
       const label = document.getElementById('connStatusLabel');
@@ -749,8 +783,35 @@
       startCamera('videoElement');
     }
 
-    // Facial Feature Extraction (64-Dimension Pixel Vector Matrix)
-    function extractFacialVectorFromCanvas(videoEl) {
+    // Ekstraksi Vektor Fitur Wajah menggunakan Deep Learning AI (128-Dimensional Vector)
+    async function extractFacialVectorFromCanvas(videoEl) {
+      if (!videoEl || videoEl.readyState < 2) return null;
+
+      // Pastikan model AI siap
+      if (!isAiModelLoaded) {
+        showToast("Memuat model AI wajah, mohon tunggu sejenak...", "info");
+        await initAiFaceModels();
+      }
+
+      if (typeof faceapi !== 'undefined' && isAiModelLoaded) {
+        try {
+          const options = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 });
+          const detection = await faceapi.detectSingleFace(videoEl, options)
+            .withFaceLandmarks()
+            .withFaceDescriptor();
+
+          if (detection && detection.descriptor) {
+            return Array.from(detection.descriptor); // Return Array Float 128-Dimensi
+          } else {
+            console.warn("Wajah tidak terdeteksi oleh model AI.");
+            return null;
+          }
+        } catch (err) {
+          console.error("AI Face Detection Error:", err);
+        }
+      }
+
+      // Fallback: Matrix 64-Grid Kecerahan Piksel (Jika CDN Model AI Gagal Dimuat)
       const canvas = document.createElement('canvas');
       canvas.width = 160;
       canvas.height = 160;
@@ -759,7 +820,6 @@
 
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const data = imageData.data;
-      
       const vector = [];
       const gridSize = 8;
       const cellW = canvas.width / gridSize;
@@ -769,14 +829,10 @@
         for (let col = 0; col < gridSize; col++) {
           let sumLuminance = 0;
           let count = 0;
-
           for (let y = row * cellH; y < (row + 1) * cellH; y++) {
             for (let x = col * cellW; x < (col + 1) * cellW; x++) {
               const idx = (Math.floor(y) * canvas.width + Math.floor(x)) * 4;
-              const r = data[idx];
-              const g = data[idx + 1];
-              const b = data[idx + 2];
-              const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+              const lum = (0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2]) / 255;
               sumLuminance += lum;
               count++;
             }
@@ -787,23 +843,42 @@
       return vector;
     }
 
-    // Cosine Similarity Matching Score
+    // Perhitungan Skor Kemiripan Vektor AI menggunakan Euclidean Distance / Cosine Similarity
     function calculateVectorMatchScore(vecA, vecB) {
-      if (!vecA || !vecB || vecA.length !== vecB.length || vecA.length === 0) return 0;
+      if (!vecA || !vecB || vecA.length === 0 || vecB.length === 0) return 0;
 
+      // Pencocokan Vektor AI 128-Dimensi (Euclidean Distance face-api.js)
+      if (vecA.length === 128 && vecB.length === 128) {
+        let distance = 0;
+        if (typeof faceapi !== 'undefined' && faceapi.euclideanDistance) {
+          distance = faceapi.euclideanDistance(vecA, vecB);
+        } else {
+          let sumSquare = 0;
+          for (let i = 0; i < 128; i++) {
+            const diff = vecA[i] - vecB[i];
+            sumSquare += diff * diff;
+          }
+          distance = Math.sqrt(sumSquare);
+        }
+
+        // Standard Threshold face-api.js = 0.6 (Jarak <= 0.6 artinya orang yang sama)
+        // Konversi Jarak ke Persentase Match:
+        const matchPercent = Math.max(0, Math.min(100, (1 - (distance / 0.8)) * 100));
+        return parseFloat(matchPercent.toFixed(1));
+      }
+
+      // Fallback 64-Dimensi Cosine Similarity
       let dotProduct = 0;
       let normA = 0;
       let normB = 0;
-
       for (let i = 0; i < vecA.length; i++) {
         dotProduct += vecA[i] * vecB[i];
         normA += vecA[i] * vecA[i];
         normB += vecB[i] * vecB[i];
       }
-
       if (normA === 0 || normB === 0) return 0;
       const similarity = dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-      return Math.min(Math.max(similarity * 100, 0), 100);
+      return parseFloat((Math.min(Math.max(similarity * 100, 0), 100)).toFixed(1));
     }
 
     function openEnrollModal() {
@@ -823,10 +898,17 @@
         return;
       }
 
-      const vector = extractFacialVectorFromCanvas(videoEl);
+      showToast("Menganalisis fitur wajah dengan AI...", "info");
+      const vector = await extractFacialVectorFromCanvas(videoEl);
+
+      if (!vector) {
+        showToast("Wajah tidak terdeteksi AI! Pastikan posisi wajah tegak & cukup cahaya.", "error");
+        return;
+      }
+
       currentUser.faceVector = vector;
 
-      showToast("Vektor Wajah berhasil diekstrak!", "success");
+      showToast("Vektor Wajah AI (128-D) berhasil direkam!", "success");
       closeEnrollModal();
       updateEmployeeProfileView();
 
@@ -881,10 +963,17 @@
       }
 
       const videoEl = document.getElementById('videoElement');
-      const scanVector = extractFacialVectorFromCanvas(videoEl);
+      showToast("Mendeteksi & Mencocokkan Wajah AI...", "info");
+      const scanVector = await extractFacialVectorFromCanvas(videoEl);
+
+      if (!scanVector) {
+        showToast("Wajah tidak terdeteksi AI! Arahkan wajah ke lingkaran kamera.", "error");
+        return;
+      }
+
       const matchScore = calculateVectorMatchScore(scanVector, currentUser.faceVector);
 
-      if (matchScore >= 75) {
+      if (matchScore >= 70) {
         const overlay = document.getElementById('scannerOverlay');
         overlay.classList.add('active');
 
@@ -902,13 +991,13 @@
           Lat: userLocation.lat,
           Lng: userLocation.lng,
           Distance: `${userLocation.distance}m`,
-          MatchScore: `${matchScore.toFixed(1)}%`,
+          MatchScore: `${matchScore}%`,
           StatusShift: "Tepat Waktu"
         };
 
         attendanceLogs.unshift(newLog);
 
-        showToast(`Presensi ${currentScanType} Berhasil! Match: ${matchScore.toFixed(1)}%`, "success");
+        showToast(`Presensi ${currentScanType} Berhasil! AI Match: ${matchScore}%`, "success");
 
         setTimeout(() => {
           overlay.classList.remove('active');
@@ -931,7 +1020,7 @@
                 lat: userLocation.lat,
                 lng: userLocation.lng,
                 distance: `${userLocation.distance}m`,
-                matchScore: `${matchScore.toFixed(1)}%`,
+                matchScore: `${matchScore}%`,
                 statusShift: "Tepat Waktu"
               })
             });
@@ -940,7 +1029,7 @@
           }
         }
       } else {
-        showToast(`Wajah Tidak Cocok! (Kemiripan: ${matchScore.toFixed(1)}%)`, "error");
+        showToast(`Wajah Tidak Cocok! (Kemiripan AI: ${matchScore}%)`, "error");
       }
     }
 
