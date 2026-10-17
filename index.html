@@ -435,6 +435,10 @@
     let currentScanType = 'MASUK';
     let userLocation = { lat: 0, lng: 0, distance: 999999, inRadius: false };
     
+    // Auto Scan Loop Control State
+    let autoScanInterval = null;
+    let isAutoScanning = false;
+    
     // AI Face Recognition Engine State
     let isAiModelLoaded = false;
     let isAiModelLoading = false;
@@ -934,15 +938,76 @@
       }
 
       document.getElementById('scanModal').classList.remove('hidden');
-      startCamera('videoElement');
+      startCamera('videoElement').then(success => {
+        if (success) {
+          startAutoScanLoop();
+        }
+      });
     }
 
     function closeScanModal() {
+      stopAutoScanLoop();
       stopCamera();
       document.getElementById('scanModal').classList.add('hidden');
     }
 
-    async function executeFaceScanProcess() {
+    function startAutoScanLoop() {
+      stopAutoScanLoop();
+      isAutoScanning = false;
+      const feedbackEl = document.getElementById('scanFeedbackText');
+      feedbackEl.innerText = "Posisikan wajah Anda di tengah lingkaran";
+      feedbackEl.className = "text-xs font-semibold text-blue-400";
+      
+      autoScanInterval = setInterval(async () => {
+        if (isAutoScanning) return;
+        const videoEl = document.getElementById('videoElement');
+        if (!videoEl || videoEl.readyState < 2) return;
+
+        if (!userLocation.inRadius) {
+          feedbackEl.innerText = `Di Luar Radius Kantor (${userLocation.distance}m)`;
+          feedbackEl.className = "text-xs font-semibold text-rose-400";
+          return;
+        }
+
+        if (!currentUser || !currentUser.faceVector || currentUser.faceVector.length === 0) {
+          feedbackEl.innerText = "Wajah acuan belum direkam!";
+          feedbackEl.className = "text-xs font-semibold text-amber-400";
+          return;
+        }
+
+        isAutoScanning = true;
+        const scanVector = await extractFacialVectorFromCanvas(videoEl);
+
+        if (scanVector) {
+          const matchScore = calculateVectorMatchScore(scanVector, currentUser.faceVector);
+          
+          if (matchScore >= 60) {
+            feedbackEl.innerText = `Wajah Cocok (${matchScore}%) - Auto Presensi!`;
+            feedbackEl.className = "text-xs font-semibold text-emerald-400";
+            stopAutoScanLoop();
+            await executeFaceScanProcess(matchScore);
+            return;
+          } else {
+            feedbackEl.innerText = `Mencocokkan Wajah AI... (${matchScore}%)`;
+            feedbackEl.className = "text-xs font-semibold text-amber-400";
+          }
+        } else {
+          feedbackEl.innerText = "Posisikan wajah Anda di tengah lingkaran";
+          feedbackEl.className = "text-xs font-semibold text-blue-400";
+        }
+        isAutoScanning = false;
+      }, 700);
+    }
+
+    function stopAutoScanLoop() {
+      if (autoScanInterval) {
+        clearInterval(autoScanInterval);
+        autoScanInterval = null;
+      }
+      isAutoScanning = false;
+    }
+
+    async function executeFaceScanProcess(presetScore = null) {
       if (!userLocation.inRadius) {
         showToast(`Gagal! Anda berada di luar radius kantor (${userLocation.distance}m)`, "error");
         return;
@@ -953,18 +1018,23 @@
         return;
       }
 
-      const videoEl = document.getElementById('videoElement');
-      showToast("Mendeteksi & Mencocokkan Wajah AI...", "info");
-      const scanVector = await extractFacialVectorFromCanvas(videoEl);
+      let matchScore = presetScore;
 
-      if (!scanVector) {
-        showToast("Wajah tidak terdeteksi AI! Arahkan wajah ke lingkaran kamera.", "error");
-        return;
+      if (matchScore === null || matchScore === undefined) {
+        const videoEl = document.getElementById('videoElement');
+        showToast("Mendeteksi & Mencocokkan Wajah AI...", "info");
+        const scanVector = await extractFacialVectorFromCanvas(videoEl);
+
+        if (!scanVector) {
+          showToast("Wajah tidak terdeteksi AI! Arahkan wajah ke lingkaran kamera.", "error");
+          return;
+        }
+
+        matchScore = calculateVectorMatchScore(scanVector, currentUser.faceVector);
       }
 
-      const matchScore = calculateVectorMatchScore(scanVector, currentUser.faceVector);
-
-      if (matchScore >= 70) {
+      if (matchScore >= 60) {
+        stopAutoScanLoop();
         const overlay = document.getElementById('scannerOverlay');
         overlay.classList.add('active');
 
