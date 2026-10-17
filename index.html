@@ -1208,11 +1208,47 @@
             <p class="font-bold text-slate-200">${emp.name} <span class="text-slate-400 font-normal">(${emp.nik})</span></p>
             <p class="text-[10px] text-slate-400">${emp.dept} • Role: ${emp.role}</p>
           </div>
-          <span class="px-2 py-0.5 rounded-full text-[10px] ${emp.faceVector && emp.faceVector.length > 0 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'} font-medium">
-            ${emp.faceVector && emp.faceVector.length > 0 ? 'Enrolled' : 'Belum Enrolled'}
-          </span>
+          <div class="flex items-center gap-2">
+            <span class="px-2 py-0.5 rounded-full text-[10px] ${emp.faceVector && emp.faceVector.length > 0 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'} font-medium">
+              ${emp.faceVector && emp.faceVector.length > 0 ? 'Enrolled' : 'Belum Enrolled'}
+            </span>
+            ${emp.faceVector && emp.faceVector.length > 0 ? `
+              <button onclick="resetEmployeeFaceVector('${emp.nik}')" class="px-2 py-1 bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 rounded-lg text-[10px] font-medium transition flex items-center gap-1" title="Reset Wajah ke Belum Enrolled">
+                <i class="fa-solid fa-rotate-left"></i> Reset
+              </button>
+            ` : ''}
+          </div>
         </div>
       `).join('');
+    }
+
+    async function resetEmployeeFaceVector(nik) {
+      const emp = employeesData.find(e => String(e.nik) === String(nik));
+      if (!emp) return;
+
+      emp.faceVector = [];
+      renderAdminEmployees();
+      showToast(`Status wajah ${emp.name} di-reset ke "Belum Enrolled"`, "success");
+
+      if (currentUser && String(currentUser.nik) === String(nik)) {
+        currentUser.faceVector = [];
+        updateEmployeeProfileView();
+      }
+
+      if (apiUrl) {
+        try {
+          await fetch(apiUrl, {
+            method: 'POST',
+            body: JSON.stringify({
+              action: "updateFaceVector",
+              nik: emp.nik,
+              faceDescriptor: []
+            })
+          });
+        } catch (err) {
+          console.error("Gagal reset vector di backend:", err);
+        }
+      }
     }
 
     function loadGeofenceForm() {
